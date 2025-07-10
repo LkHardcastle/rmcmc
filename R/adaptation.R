@@ -406,7 +406,9 @@ variance_corrected_naive_shape_adapter <- function(kappa = 1) {
                                   + (sample_index)*mean_estimate_minus_two*mean_estimate_minus_one + mean_estimate_minus_one^2
                                   + mean_estimate*intial_position - mean_estimate_minus_one*intial_position)/(sample_index + 1)
     previous_position <<- position
-    autocorrelation_estimate <- autocovariance_estimate/variance_estimate
+    autocorrelation_estimate <- min(0.999,autocovariance_estimate/variance_estimate)
+    #message(min(autocorrelation_estimate))
+    #message(max(autocorrelation_estimate))
     proposal$update(shape = sqrt(variance_estimate/(1 - 2/((sample_index + 2)*(sample_index+1)) * ((sample_index+1)*autocorrelation_estimate - (sample_index + 2)*autocorrelation_estimate^2 + autocorrelation_estimate^(sample_index+3))/(1-autocorrelation_estimate)^2)))
   }
   list(
@@ -472,16 +474,16 @@ covariance_naive_diagonal_corrected_shape_adapter <- function(kappa = 1) {
   mean_estimate <- NULL
   mean_estimate_minus_one <- NULL
   mean_estimate_minus_two <- NULL
-  chol_covariance_estimate <- NULL
+  covariance_estimate <- NULL
   autocovariance_estimate <- NULL
   intial_position <- NULL
   previous_position <<- NULL
   initialize <- function(proposal, initial_state) {
     mean_estimate <<- initial_state$position()
-    mean_estimate_minus_one <<- initial_state$position()
-    mean_estimate_minus_two <<- initial_state$position()
+    mean_estimate_minus_one <<- initial_state$position() + rnorm(initial_state$dimension(), initial_state$position(), 0.01)
+    mean_estimate_minus_two <<- mean_estimate_minus_one + rnorm(initial_state$dimension(), initial_state$position(), 0.01)
     intial_position <<- initial_state$position()
-    chol_covariance_estimate <<- diag(1., initial_state$dimension())
+    covariance_estimate <<- diag(1., initial_state$dimension())
     previous_position <<- initial_state$position()
     autocovariance_estimate <<- rep(0.0, initial_state$dimension())
   }
@@ -490,22 +492,25 @@ covariance_naive_diagonal_corrected_shape_adapter <- function(kappa = 1) {
     # as regularizer
     beta <- (sample_index + 2)^(-kappa)
     position <- state_and_statistics$state$position()
-    mean_estimate <<- mean_estimate + beta * (position - mean_estimate)
+    #mean_estimate <<- mean_estimate + beta * (position - mean_estimate)
+    mean_estimate <<- ((sample_index + 1)*mean_estimate + position)/(sample_index + 2)
     mean_estimate_minus_two <<- mean_estimate_minus_one
     mean_estimate_minus_one <<- mean_estimate
-    autocovariance_estimate <<- (autocovariance_estimate*(sample_index) + previous_position*position
-                                 - mean_estimate^2 - (sample_index+1)*mean_estimate_minus_one*mean_estimate
-                                 + (sample_index)*mean_estimate_minus_two*mean_estimate_minus_one + mean_estimate_minus_one^2
-                                 + mean_estimate*intial_position - mean_estimate_minus_one*intial_position)/(sample_index + 1)
+    autocovariance_estimate <<- (autocovariance_estimate*(sample_index) + previous_position*position -
+                                 mean_estimate^2 - (sample_index+1)*mean_estimate_minus_one*mean_estimate +
+                                 (sample_index)*mean_estimate_minus_two*mean_estimate_minus_one + mean_estimate_minus_one^2 +
+                                 mean_estimate*intial_position - mean_estimate_minus_one*intial_position)/(sample_index + 1)
     previous_position <<- state_and_statistics$state$position()
-    chol_covariance_estimate <<- ramcmc::chol_update(
-      sqrt(1 - beta) * chol_covariance_estimate,
-      sqrt(beta) * (position - mean_estimate)
-    )
-    autocorrelation_estimate <- autocovariance_estimate/diag(chol_covariance_estimate)
-    corrected_covariance <- chol_covariance_estimate
-    diag(corrected_covariance) <- diag(chol_covariance_estimate)/(1 - 2/((sample_index + 2)*(sample_index+1)) * ((sample_index+1)*autocorrelation_estimate
-                                      - (sample_index + 2)*autocorrelation_estimate^2 + autocorrelation_estimate^(sample_index+3))/(1-autocorrelation_estimate)^2)
+    #chol_covariance_estimate <<- ramcmc::chol_update(
+    #  sqrt(1 - beta) * chol_covariance_estimate,
+    #  sqrt(beta) * (position - mean_estimate)
+    #)
+    covariance_estimate <<- covariance_estimate*sample_index/(sample_index + 1) +
+      ((sample_index + 1)*tcrossprod(mean_estimate_minus_one) - (sample_index + 2)*tcrossprod(mean_estimate) + tcrossprod(position))/(sample_index + 1)
+    autocorrelation_estimate <- autocovariance_estimate/diag(covariance_estimate)
+    corrected_covariance <- covariance_estimate
+    diag(corrected_covariance) <- diag(covariance_estimate)/(1 - 2/((sample_index + 2)*(sample_index+1)) * ((sample_index+1)*autocorrelation_estimate -
+                                      (sample_index + 2)*autocorrelation_estimate^2 + autocorrelation_estimate^(sample_index+3))/(1-autocorrelation_estimate)^2)
     proposal$update(shape = corrected_covariance)
   }
   list(
@@ -515,7 +520,10 @@ covariance_naive_diagonal_corrected_shape_adapter <- function(kappa = 1) {
     state = function() {
       list(
         mean_estimate = mean_estimate,
-        chol_covariance_estimate = chol_covariance_estimate,
+        mean_estimate_minus_one = mean_estimate_minus_one,
+        mean_estimate_minus_two = mean_estimate_minus_two,
+        intial_position = intial_position,
+        covariance_estimate = covariance_estimate,
         autocovariance_estimate = autocovariance_estimate,
         previous_position = previous_position
       )
@@ -557,7 +565,6 @@ covariance_diagonal_corrected_shape_adapter <- function(kappa = 1) {
     diag(corrected_covariance) <- diag(chol_covariance_estimate)/(1 - 2/((sample_index + 2)*(sample_index+1)) * ((sample_index+1)*autocorrelation_estimate
                                        - (sample_index + 2)*autocorrelation_estimate^2 + autocorrelation_estimate^(sample_index+3))/(1-autocorrelation_estimate)^2)
     proposal$update(shape = corrected_covariance)
-    message("------ \n", autocorrelation_estimate[1],"\n", chol_covariance_estimate[1], "\n",corrected_covariance[1], "\n")
   }
   list(
     initialize = initialize,
@@ -584,6 +591,7 @@ covariance_quenouille_alternating_shape_adapter <- function(kappa = 1) {
   old_mean_estimate_odd <- NULL
   covariance_estimate_even <- NULL
   covariance_estimate_odd <- NULL
+  corrected_covariance <- NULL
   initialize <- function(proposal, initial_state) {
     mean_estimate <<- initial_state$position()
     old_mean_estimate <<- initial_state$position()
@@ -591,9 +599,10 @@ covariance_quenouille_alternating_shape_adapter <- function(kappa = 1) {
     old_mean_estimate_even <<- initial_state$position()
     mean_estimate_odd <<- initial_state$position()
     old_mean_estimate_odd <<- initial_state$position()
-    covariance_estimate <<- rep(1., initial_state$dimension())
-    covariance_estimate_even <<- rep(1., initial_state$dimension())
-    covariance_estimate_odd <<- rep(1., initial_state$dimension())
+    covariance_estimate <<- diag(1., initial_state$dimension())
+    corrected_covariance <<- diag(1., initial_state$dimension())
+    covariance_estimate_even <<- diag(1., initial_state$dimension())
+    covariance_estimate_odd <<- diag(1., initial_state$dimension())
   }
   update <- function(proposal, sample_index, state_and_statistics) {
     # Offset sample_index by 1 so that initial unity variance_estimate acts as
@@ -602,23 +611,24 @@ covariance_quenouille_alternating_shape_adapter <- function(kappa = 1) {
     position <- state_and_statistics$state$position()
     old_mean_estimate <<- mean_estimate
     mean_estimate <<- ((sample_index + 1)*mean_estimate + position)/(sample_index + 2)
-    covariance_estimate <<- covariance_estimate*sample_index/(sample_index + 1)
-                            + ((sample_index + 1)*tcrossprod(old_mean_estimate) - (sample_index + 2)*tcrossprod(mean_estimate) + tcrossprod(position))/(sample_index + 1)
+    covariance_estimate <<- covariance_estimate*sample_index/(sample_index + 1) +
+                            ((sample_index + 1)*tcrossprod(old_mean_estimate) - (sample_index + 2)*tcrossprod(mean_estimate) + tcrossprod(position))/(sample_index + 1)
     if(sample_index %% 2 == 0){
       sample_index_even <- sample_index/2
       old_mean_estimate_even <<- mean_estimate_even
       mean_estimate_even <<- ((sample_index_even + 1)*mean_estimate_even + position)/(sample_index_even + 2)
-      covariance_estimate_even <<- covariance_estimate_even*sample_index_even/(sample_index_even + 1)
-      + ((sample_index_even + 1)*tcrossprod(old_mean_estimate_even) - (sample_index_even + 2)*tcrossprod(mean_estimate_even) + tcrossprod(position))/(sample_index_even + 1)
+      covariance_estimate_even <<- covariance_estimate_even*sample_index_even/(sample_index_even + 1) +
+       ((sample_index_even + 1)*tcrossprod(old_mean_estimate_even) - (sample_index_even + 2)*tcrossprod(mean_estimate_even) + tcrossprod(position))/(sample_index_even + 1)
+      corrected_covariance <<- 2*covariance_estimate - (covariance_estimate_even + covariance_estimate_odd)/2
     }else{
-      sample_index_odd <- sample_index/2
+      sample_index_odd <- sample_index/2 + 1
       old_mean_estimate_odd <<- mean_estimate_odd
       mean_estimate_odd <<- ((sample_index_odd + 1)*mean_estimate_odd + position)/(sample_index_odd + 2)
-      covariance_estimate_odd <<- covariance_estimate_odd*sample_index_odd/(sample_index_odd + 1)
-      + ((sample_index_odd + 1)*tcrossprod(old_mean_estimate_odd) - (sample_index_odd + 2)*tcrossprod(mean_estimate_odd) + tcrossprod(position))/(sample_index_odd + 1)
+      covariance_estimate_odd <<- covariance_estimate_odd*sample_index_odd/(sample_index_odd + 1) +
+       ((sample_index_odd + 1)*tcrossprod(old_mean_estimate_odd) - (sample_index_odd + 2)*tcrossprod(mean_estimate_odd) + tcrossprod(position))/(sample_index_odd + 1)
     }
-
-    proposal$update(shape = 2*covariance_estimate - (covariance_estimate_even + covariance_estimate_odd)/2)
+    #message(covariance_estimate, "\n",corrected_covariance,"\n------\n")
+    proposal$update(shape = corrected_covariance)
   }
   list(
     initialize = initialize,
@@ -628,7 +638,8 @@ covariance_quenouille_alternating_shape_adapter <- function(kappa = 1) {
       list(
         mean_estimate = mean_estimate, covariance_estimate = covariance_estimate,
         mean_estimate_odd = mean_estimate_odd, covariance_estimate_odd = covariance_estimate_odd,
-        mean_estimate_even = mean_estimate_even, covariance_estimate_even = covariance_estimate_even
+        mean_estimate_even = mean_estimate_even, covariance_estimate_even = covariance_estimate_even,
+        corrected_covariance = corrected_covariance
       )
     }
   )
